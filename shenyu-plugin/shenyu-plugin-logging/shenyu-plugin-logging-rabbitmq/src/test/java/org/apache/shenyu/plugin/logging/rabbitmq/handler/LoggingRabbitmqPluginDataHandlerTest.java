@@ -33,6 +33,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mockito;
+import org.mockito.MockedConstruction;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
@@ -177,6 +178,44 @@ public final class LoggingRabbitmqPluginDataHandlerTest {
 
         Assertions.assertDoesNotThrow(() -> loggingRabbitmqPluginDataHandler.handlerSelector(selectorData));
         Assertions.assertNull(RabbitmqClientCache.getInstance().getClientCache().get(selectorData.getId()));
+    }
+
+    @Test
+    public void testRestoreIdenticalCustomSelectorAfterClearing() {
+        final String selectorId = "restore-" + UUID.randomUUID();
+        final RabbitmqClientCache cache = RabbitmqClientCache.getInstance();
+        selectorData.setId(selectorId);
+        selectorData.setHandle(config);
+        try (MockedConstruction<RabbitmqLogCollectClient> constructions = Mockito.mockConstruction(RabbitmqLogCollectClient.class)) {
+            loggingRabbitmqPluginDataHandler.handlerSelector(selectorData);
+            Assertions.assertNotNull(cache.getRabbitmqClient(selectorId));
+            Assertions.assertEquals(1, constructions.constructed().size());
+
+            loggingRabbitmqPluginDataHandler.handlerSelector(selectorData);
+            Assertions.assertEquals(1, constructions.constructed().size());
+
+            selectorData.setHandle("{}");
+            loggingRabbitmqPluginDataHandler.handlerSelector(selectorData);
+            Assertions.assertNull(cache.getRabbitmqClient(selectorId));
+            Assertions.assertFalse(LoggingRabbitmqPluginDataHandler.getSelectApiConfigMap().containsKey(selectorId));
+            verify(constructions.constructed().get(0), times(1)).close();
+
+            selectorData.setHandle(config);
+            loggingRabbitmqPluginDataHandler.handlerSelector(selectorData);
+            Assertions.assertNotNull(cache.getRabbitmqClient(selectorId));
+            Assertions.assertEquals(2, constructions.constructed().size());
+
+            cache.invalidate(selectorId);
+            loggingRabbitmqPluginDataHandler.handlerSelector(selectorData);
+            Assertions.assertEquals(3, constructions.constructed().size());
+
+            selectorData.setHandle(config.replace("exchange.logging.plugin", "exchange.logging.changed"));
+            loggingRabbitmqPluginDataHandler.handlerSelector(selectorData);
+            Assertions.assertEquals(4, constructions.constructed().size());
+        } finally {
+            cache.invalidate(selectorId);
+            LoggingRabbitmqPluginDataHandler.getSelectApiConfigMap().remove(selectorId);
+        }
     }
 
     private PluginData createPluginData() {
